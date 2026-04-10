@@ -1,15 +1,38 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const app = express();
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Data store (simple in-memory)
-const calls = [];
-const sms = [];
+// Your real phone number - Zury will receive calls/SMS
+const ZURY_PHONE = '+525588974435';
+
+// Data file for persistence
+const DATA_FILE = '/tmp/twilio-data.json';
+
+// Load data from file
+function loadData() {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const data = fs.readFileSync(DATA_FILE, 'utf8');
+      return JSON.parse(data);
+    }
+  } catch (e) {}
+  return { calls: [], sms: [] };
+}
+
+// Save data to file
+function saveData(data) {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {}
+}
 
 // Web Dashboard
 app.get('/', (req, res) => {
+  const data = loadData();
   res.send(`
 <!DOCTYPE html>
 <html lang="es">
@@ -36,10 +59,7 @@ app.get('/', (req, res) => {
     .item-type { font-weight: bold; color: #7c3aed; }
     .item-time { color: #666; font-size: 0.85rem; }
     .item-body { color: #ccc; font-size: 0.95rem; }
-    .btn { background: #7c3aed; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; }
-    .btn:hover { background: #6d28d9; }
     .setup { background: #1a1a2e; padding: 20px; border-radius: 12px; margin-top: 30px; }
-    .setup h3 { margin-bottom: 15px; }
     .setup pre { background: #0f0f23; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; color: #10b981; }
   </style>
 </head>
@@ -56,17 +76,17 @@ app.get('/', (req, res) => {
     <div class="grid">
       <div class="card">
         <h2>Llamadas Totales</h2>
-        <div class="stat" id="calls-count">0</div>
+        <div class="stat" id="calls-count">${data.calls.length}</div>
         <div class="stat-label">Recibidas</div>
       </div>
       <div class="card">
         <h2>SMS Totales</h2>
-        <div class="stat" id="sms-count">0</div>
+        <div class="stat" id="sms-count">${data.sms.length}</div>
         <div class="stat-label">Recibidos</div>
       </div>
       <div class="card">
         <h2>Uptime</h2>
-        <div class="stat" id="uptime">0%</div>
+        <div class="stat" id="uptime">0h</div>
         <div class="stat-label">Sistema activo</div>
       </div>
     </div>
@@ -74,58 +94,43 @@ app.get('/', (req, res) => {
     <div class="activity">
       <h3>📞 Últimas Llamadas</h3>
       <div id="calls-list">
-        <div class="item">
-          <div class="item-header">
-            <span class="item-type">Voice Call</span>
-            <span class="item-time">Esperando...</span>
+        ${data.calls.length > 0 ? data.calls.slice(-5).reverse().map(c => `
+          <div class="item">
+            <div class="item-header">
+              <span class="item-type">Voice Call</span>
+              <span class="item-time">${new Date(c.time).toLocaleString()}</span>
+            </div>
+            <div class="item-body">From: ${c.From || 'Unknown'}</div>
           </div>
-          <div class="item-body">Las llamadas aparecerán aquí</div>
-        </div>
+        `).join('') : '<div class="item"><div class="item-body">Esperando llamadas...</div></div>'}
       </div>
       
       <h3 style="margin-top: 30px;">💬 Últimos SMS</h3>
       <div id="sms-list">
-        <div class="item">
-          <div class="item-header">
-            <span class="item-type">SMS</span>
-            <span class="item-time">Esperando...</span>
+        ${data.sms.length > 0 ? data.sms.slice(-5).reverse().map(s => `
+          <div class="item">
+            <div class="item-header">
+              <span class="item-type">SMS</span>
+              <span class="item-time">${new Date(s.time).toLocaleString()}</span>
+            </div>
+            <div class="item-body"><strong>De:</strong> ${s.From || 'Unknown'}<br><strong>Mensaje:</strong> ${s.Body || ''}</div>
           </div>
-          <div class="item-body">Los SMS aparecerán aquí</div>
-        </div>
+        `).join('') : '<div class="item"><div class="item-body">Esperando SMS...</div></div>'}
       </div>
     </div>
     
     <div class="setup">
-      <h3>⚙️ Webhooks de Twilio</h3>
-      <p style="color: #888; margin-bottom: 15px;">Copia estas URLs en tu consola de Twilio:</p>
+      <h3>⚙️ Configuración</h3>
       <pre>
-Voice Webhook:
-https://twilio.e6labs.lat/webhook/voice
+📱 Tu número: ${ZURY_PHONE
 
-SMS Webhook:
-https://twilio.e6labs.lat/webhook/sms</pre>
-      <button class="btn" onclick="testWebhook()">Probar Webhook</button>
+}
+🌐 Webhooks configurados:
+Voice: https://twilio.e6labs.lat/webhook/voice
+SMS:   https://twilio.e6labs.lat/webhook/sms
+      </pre>
     </div>
   </div>
-  
-  <script>
-    let startTime = Date.now();
-    function updateStats() {
-      fetch('/api/stats').then(r => r.json()).then(data => {
-        document.getElementById('calls-count').textContent = data.calls;
-        document.getElementById('sms-count').textContent = data.sms;
-        const hours = Math.floor((Date.now() - startTime) / 3600000);
-        document.getElementById('uptime').textContent = hours + 'h';
-      });
-    }
-    setInterval(updateStats, 5000);
-    updateStats();
-    
-    function testWebhook() {
-      fetch('/webhook/sms', { method: 'POST', body: JSON.stringify({ From: '+1234567890', Body: 'Test message' }), headers: {'Content-Type': 'application/json'} })
-        .then(() => alert('Webhook test sent!'));
-    }
-  </script>
 </body>
 </html>
   `);
@@ -133,60 +138,64 @@ https://twilio.e6labs.lat/webhook/sms</pre>
 
 // API Stats
 app.get('/api/stats', (req, res) => {
+  const data = loadData();
   res.json({
-    calls: calls.length,
-    sms: sms.length,
+    calls: data.calls.length,
+    sms: data.sms.length,
     uptime: process.uptime()
   });
 });
 
 // API Calls
-app.get('/api/calls', (req, res) => res.json(calls.slice(-20).reverse()));
-app.get('/api/sms', (req, res) => res.json(sms.slice(-20).reverse()));
+app.get('/api/calls', (req, res) => {
+  const data = loadData();
+  res.json(data.calls.slice(-20).reverse());
+});
 
-// Twilio Webhooks
+app.get('/api/sms', (req, res) => {
+  const data = loadData();
+  res.json(data.sms.slice(-20).reverse());
+});
+
+// Twilio Voice Webhook - FORWARD CALL TO ZURY
 app.post('/webhook/voice', (req, res) => {
-  calls.push({ ...req.body, time: new Date().toISOString() });
-  console.log('Voice call:', req.body);
+  const data = loadData();
+  data.calls.push({ ...req.body, time: new Date().toISOString() });
+  saveData(data);
+  
+  console.log('Voice call received:', req.body);
+  
+  // Forward the call to Zury's real phone
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice">Hola! Soy Shannon. ¿En qué puedo ayudarte?</Say>
-  <Pause length="1"/>
-  <Say voice="alice">Puedo ayudarte con información, llamadas y más.</Say>
-  <Record maxLength="60" action="/webhook/voice/callback" method="POST"/>
+  <Say voice="alice">Tienes una llamada entrante. Redirigiendo...</Say>
+  <Dial callerId="${ZURY_PHONE}" record="record-from-ringing">
+    <Number>${ZURY_PHONE}</Number>
+  </Dial>
 </Response>`;
+  
   res.type('text/xml').send(twiml);
 });
 
-app.post('/webhook/voice/callback', (req, res) => {
-  console.log('Voice recording:', req.body);
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">Gracias por tu mensaje. Te contactaremos pronto.</Say>
-</Response>`;
-  res.type('text/xml').send(twiml);
-});
-
+// Twilio SMS Webhook - FORWARD SMS TO ZURY  
 app.post('/webhook/sms', (req, res) => {
-  sms.push({ ...req.body, time: new Date().toISOString() });
-  console.log('SMS received:', req.body);
+  const data = loadData();
+  data.sms.push({ ...req.body, time: new Date().toISOString() });
+  saveData(data);
+  
   const from = req.body.From || 'Unknown';
   const body = req.body.Body || '';
   
-  // Simple auto-response
-  let response = 'Gracias por tu mensaje. Shannon te responderá pronto.';
-  if (body.toLowerCase().includes('hola')) {
-    response = '¡Hola! Soy Shannon. ¿En qué puedo ayudarte?';
-  } else if (body.toLowerCase().includes('ayuda')) {
-    response = 'Puedo ayudarte con información, llamadas y más. ¿Qué necesitas?';
-  }
+  console.log('SMS received from', from, ':', body);
   
+  // Respond that message was forwarded
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Message>${response}</Message>
+  <Message>Recibido. Tu mensaje fue enviado a ${ZURY_PHONE}. Te contactaremos pronto.</Message>
 </Response>`;
+  
   res.type('text/xml').send(twiml);
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Shannon Twilio server running on ${PORT}`));
+app.listen(PORT, () => console.log(`Shannon Twilio server running on ${PORT} - Forwarding to ${ZURY_PHONE}`));
