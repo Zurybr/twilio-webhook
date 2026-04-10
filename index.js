@@ -4,6 +4,13 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+// Root
+app.get('/', (req, res) => res.json({ 
+  service: 'twilio-webhook-shannon',
+  version: '1.0.0',
+  endpoints: ['/webhook/voice', '/webhook/sms', '/health']
+}));
+
 app.post('/webhook/voice', (req, res) => {
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
