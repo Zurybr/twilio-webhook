@@ -1,7 +1,7 @@
-FROM node:22-alpine
+FROM node:22-slim
 WORKDIR /app
 COPY package*.json ./
-RUN npm init -y && npm install express twilio dotenv
+RUN npm ci --only=production
 COPY index.js .
 EXPOSE 3000
 CMD ["node", "index.js"]
